@@ -9,6 +9,14 @@ locals {
   ingress_rules_cidr_blocks = setproduct(var.ingress_rules, var.ingress_cidr_blocks)
   ingress_rules_ipv6        = setproduct(var.ingress_rules, var.ingress_ipv6_cidr_blocks)
   ingress_rules_prefix_list = setproduct(var.ingress_rules, var.ingress_prefix_list_ids)
+
+  processed_ingress_with_cidr_blocks = flatten([
+    for ingress in var.ingress_with_cidr_blocks : [
+      for cidr_ipv4 in split(",", ingress.cidr_blocks) :
+      merge(ingress, { cidr_blocks = cidr_ipv4 })
+    ]
+  ])
+
 }
 
 ##########################
@@ -72,7 +80,7 @@ resource "aws_vpc_security_group_ingress_rule" "ingress_rules_ipv4" {
 
   security_group_id = local.this_sg_id
 
-  cidr_ipv4   = ingress_rules_cidr_blocks[count.index][1]
+  cidr_ipv4   = local.ingress_rules_cidr_blocks[count.index][1]
   description = var.rules[local.ingress_rules_cidr_blocks[count.index][0]][3]
 
   from_port   = var.rules[local.ingress_rules_cidr_blocks[count.index][0]][0]
@@ -121,9 +129,9 @@ resource "aws_vpc_security_group_ingress_rule" "computed_ingress_rules_ipv4" {
   cidr_ipv4   = var.ingress_cidr_blocks[count.index % length(var.ingress_cidr_blocks)]
   description = var.rules[var.computed_ingress_rules[count.index]][3]
 
-  from_port   = var.rules[var.computed_ingress_rules[count.index % number_of_computed_ingress_rules]][0]
-  to_port     = var.rules[var.computed_ingress_rules[count.index % number_of_computed_ingress_rules]][1]
-  ip_protocol = var.rules[var.computed_ingress_rules[count.index % number_of_computed_ingress_rules]][2]
+  from_port   = var.rules[var.computed_ingress_rules[count.index % var.number_of_computed_ingress_rules]][0]
+  to_port     = var.rules[var.computed_ingress_rules[count.index % var.number_of_computed_ingress_rules]][1]
+  ip_protocol = var.rules[var.computed_ingress_rules[count.index % var.number_of_computed_ingress_rules]][2]
 
   tags = var.tags
 }
@@ -136,9 +144,9 @@ resource "aws_vpc_security_group_ingress_rule" "computed_ingress_rules_ipv6" {
   cidr_ipv6   = var.ingress_ipv6_cidr_blocks[count.index % length(var.ingress_ipv6_cidr_blocks)]
   description = var.rules[var.computed_ingress_rules[count.index]][3]
 
-  from_port   = var.rules[var.computed_ingress_rules[count.index % number_of_computed_ingress_rules]][0]
-  to_port     = var.rules[var.computed_ingress_rules[count.index % number_of_computed_ingress_rules]][1]
-  ip_protocol = var.rules[var.computed_ingress_rules[count.index % number_of_computed_ingress_rules]][2]
+  from_port   = var.rules[var.computed_ingress_rules[count.index % var.number_of_computed_ingress_rules]][0]
+  to_port     = var.rules[var.computed_ingress_rules[count.index % var.number_of_computed_ingress_rules]][1]
+  ip_protocol = var.rules[var.computed_ingress_rules[count.index % var.number_of_computed_ingress_rules]][2]
 
   tags = var.tags
 }
@@ -151,9 +159,9 @@ resource "aws_vpc_security_group_ingress_rule" "computed_ingress_rules_prefix_li
   prefix_list_id = var.ingress_prefix_list_ids[count.index % length(var.ingress_prefix_list_ids)]
   description    = var.rules[var.computed_ingress_rules[count.index]][3]
 
-  from_port   = var.rules[var.computed_ingress_rules[count.index % number_of_computed_ingress_rules]][0]
-  to_port     = var.rules[var.computed_ingress_rules[count.index % number_of_computed_ingress_rules]][1]
-  ip_protocol = var.rules[var.computed_ingress_rules[count.index % number_of_computed_ingress_rules]][2]
+  from_port   = var.rules[var.computed_ingress_rules[count.index % var.number_of_computed_ingress_rules]][0]
+  to_port     = var.rules[var.computed_ingress_rules[count.index % var.number_of_computed_ingress_rules]][1]
+  ip_protocol = var.rules[var.computed_ingress_rules[count.index % var.number_of_computed_ingress_rules]][2]
 
   tags = var.tags
 }
@@ -250,43 +258,35 @@ resource "aws_vpc_security_group_ingress_rule" "computed_ingress_with_source_sec
 }
 
 # Security group rules with "cidr_blocks", but without "ipv6_cidr_blocks", "source_security_group_id" and "self"
-resource "aws_security_group_rule" "ingress_with_cidr_blocks" {
-  count = local.create ? length(var.ingress_with_cidr_blocks) : 0
+resource "aws_vpc_security_group_ingress_rule" "ingress_with_cidr_blocks" {
+  count = local.create ? length(local.processed_ingress_with_cidr_blocks) : 0
 
   security_group_id = local.this_sg_id
-  type              = "ingress"
 
-  cidr_blocks = compact(split(
-    ",",
-    lookup(
-      var.ingress_with_cidr_blocks[count.index],
-      "cidr_blocks",
-      join(",", var.ingress_cidr_blocks),
-    ),
-  ))
+  cidr_ipv4 = local.processed_ingress_with_cidr_blocks[count.index].cidr_blocks
 
   description = lookup(
-    var.ingress_with_cidr_blocks[count.index],
+    local.processed_ingress_with_cidr_blocks[count.index],
     "description",
     "Ingress Rule",
   )
 
   from_port = lookup(
-    var.ingress_with_cidr_blocks[count.index],
+    local.processed_ingress_with_cidr_blocks[count.index],
     "from_port",
-    var.rules[lookup(var.ingress_with_cidr_blocks[count.index], "rule", "_")][0],
+    var.rules[lookup(local.processed_ingress_with_cidr_blocks[count.index], "rule", "_")][0],
   )
 
   to_port = lookup(
-    var.ingress_with_cidr_blocks[count.index],
+    local.processed_ingress_with_cidr_blocks[count.index],
     "to_port",
-    var.rules[lookup(var.ingress_with_cidr_blocks[count.index], "rule", "_")][1],
+    var.rules[lookup(local.processed_ingress_with_cidr_blocks[count.index], "rule", "_")][1],
   )
 
-  protocol = lookup(
-    var.ingress_with_cidr_blocks[count.index],
+  ip_protocol = lookup(
+    local.processed_ingress_with_cidr_blocks[count.index],
     "protocol",
-    var.rules[lookup(var.ingress_with_cidr_blocks[count.index], "rule", "_")][2],
+    var.rules[lookup(local.processed_ingress_with_cidr_blocks[count.index], "rule", "_")][2],
   )
 }
 
